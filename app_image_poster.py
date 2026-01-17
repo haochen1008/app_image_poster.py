@@ -6,7 +6,7 @@ import textwrap
 import os
 import re
 
-st.set_page_config(page_title="Hao Harbour 官方海报旗舰版", layout="wide")
+st.set_page_config(page_title="Hao Harbour 官方海报", layout="wide")
 
 def load_font(size):
     font_path = "simhei.ttf"
@@ -24,39 +24,50 @@ def call_ai_summary(desc):
     res = requests.post(API_URL, headers=headers, json=payload)
     return res.json()['choices'][0]['message']['content']
 
-# --- 新功能：手动画一个“勾”，永不乱码 ---
 def draw_checkmark(draw, x, y, size=30, color=(30, 30, 30)):
-    # 比例点：勾的起点、转折点、终点
     points = [(x, y + size//2), (x + size//3, y + size), (x + size, y)]
     draw.line(points, fill=color, width=5)
 
-# --- 水印升级：更深、更大、不截断 ---
-def add_custom_watermark(image, text):
-    txt_layer = Image.new('RGBA', image.size, (255, 255, 255, 0))
-    # 字体加大到 180
-    font = load_font(180)
-    # 颜色加深 (透明度 120)
-    color = (80, 80, 80, 120) 
+# --- 水印升级：居中、旋转、不截断 ---
+def add_centered_watermark(image, text):
+    # 转为 RGBA 方便处理透明度
+    img = image.convert('RGBA')
+    width, height = img.size
     
-    # 渲染文字
-    temp_draw = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
+    # 创建一个和原图一样大的透明层
+    txt_layer = Image.new('RGBA', img.size, (255, 255, 255, 0))
+    # 字体大小 180
+    font = load_font(180)
+    # 颜色加深，透明度 120
+    fill = (70, 70, 70, 120) 
+
+    # 为了旋转文字且不被截断，我们先在一个小图上画字
+    # 计算文字宽高
+    temp_draw = ImageDraw.Draw(txt_layer)
     bbox = temp_draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    txt_img = Image.new('RGBA', (tw + 100, th + 100), (255, 255, 255, 0))
+    # 创建文字小图，预留旋转空间
+    txt_img = Image.new('RGBA', (tw + 200, th + 200), (255, 255, 255, 0))
     d = ImageDraw.Draw(txt_img)
-    d.text((50, 50), text, font=font, fill=color)
+    d.text((100, 100), text, font=font, fill=fill)
     
-    # 旋转 30 度（更平缓，不容易被边缘切断）
-    rotated = txt_img.rotate(30, expand=True, resample=Image.BICUBIC)
-    rw, rh = rotated.size
-    
-    # 放置两个水印：一个偏左上，一个偏右下
-    w, h = image.size
-    image.paste(rotated, (w//10, h//4), rotated) # 左移：w//6 变成 w//10
-    image.paste(rotated, (w//2 - 100, h//2 + 200), rotated)
-    
-    return image
+    # 旋转 20 度（角度越小越不容易出界）
+    rotated_txt = txt_img.rotate(20, expand=True, resample=Image.BICUBIC)
+    rw, rh = rotated_txt.size
+
+    # 计算两个居中位置
+    # 位置1：上半部分（图片区域）中心
+    pos1 = (width // 2 - rw // 2, height // 4 - rh // 2)
+    # 位置2：下半部分（文字区域）中心
+    pos2 = (width // 2 - rw // 2, height * 3 // 4 - rh // 2)
+
+    # 粘贴水印到透明层
+    txt_layer.paste(rotated_txt, pos1, rotated_txt)
+    txt_layer.paste(rotated_txt, pos2, rotated_txt)
+
+    # 合并原图和水印层
+    return Image.alpha_composite(img, txt_layer)
 
 def create_poster(images, text):
     canvas_w = 1200
@@ -64,11 +75,11 @@ def create_poster(images, text):
     gap = 25
     rows = (len(images) + 1) // 2
     
-    # 画布初始化
+    # 初始化超长画布
     poster = Image.new('RGB', (canvas_w, 5000), (255, 255, 255))
     draw = ImageDraw.Draw(poster)
     
-    # 图片排版
+    # 拼图
     for i, img_file in enumerate(images):
         img = Image.open(img_file).convert("RGB")
         tw = (canvas_w - gap * 3) // 2
@@ -80,7 +91,7 @@ def create_poster(images, text):
         y = (i // 2) * (img_h + gap) + gap
         poster.paste(img, (x, y))
 
-    # --- 文案与画勾逻辑 ---
+    # 文案排版
     clean_text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s,，.。\-\/]', '', text)
     font = load_font(46)
     cur_y = rows * (img_h + gap) + 80
@@ -89,14 +100,13 @@ def create_poster(images, text):
         line = line.strip()
         if not line: continue
         
-        # 如果这一行是列表项
         is_list = line.startswith('-')
         content = line.lstrip('- ').strip()
         
         wrapped = textwrap.wrap(content, width=22 if is_list else 24)
         for idx, wl in enumerate(wrapped):
             if is_list and idx == 0:
-                draw_checkmark(draw, 80, cur_y + 10) # 在第一行画勾
+                draw_checkmark(draw, 80, cur_y + 10)
                 draw.text((130, cur_y), wl, fill=(30, 30, 30), font=font)
             else:
                 indent = 130 if is_list else 80
@@ -104,23 +114,24 @@ def create_poster(images, text):
             cur_y += 85
         cur_y += 10
 
-    # 精准裁剪
+    # 精确裁剪底部
     final_poster = poster.crop((0, 0, canvas_w, cur_y + 80))
-    # 转 RGBA 加水印
-    final_poster = add_custom_watermark(final_poster.convert('RGBA'), "Hao Harbour")
+    
+    # 添加两个居中的大水印
+    watermarked_poster = add_centered_watermark(final_poster, "Hao Harbour")
     
     buf = io.BytesIO()
-    final_poster.convert('RGB').save(buf, format='PNG')
+    watermarked_poster.convert('RGB').save(buf, format='PNG')
     return buf.getvalue()
 
 # --- UI ---
-st.title("🏡 Hao Harbour 海报旗舰版 (水印&勾号完美修复)")
+st.title("🏡 Hao Harbour 海报")
 desc = st.text_area("粘贴 Description")
-files = st.file_uploader("上传房源照片", accept_multiple_files=True)
+files = st.file_uploader("上传图片", accept_multiple_files=True)
 
-if st.button("🚀 生成最终版海报"):
+if st.button("🚀 生成海报"):
     if desc and files:
-        with st.spinner("正在绘制完美勾号与加深水印..."):
+        with st.spinner("正在生成海报..."):
             poster_data = create_poster(files[:6], call_ai_summary(desc))
             st.image(poster_data)
-            st.download_button("📥 下载海报图片", poster_data, "hao_harbour_final.png")
+            st.download_button("📥 下载海报图片", poster_data, "hao_harbour_poster.png")
