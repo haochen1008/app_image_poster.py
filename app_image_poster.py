@@ -6,7 +6,7 @@ import textwrap
 import os
 import re
 
-st.set_page_config(page_title="Hao Harbour 专业海报生成器", layout="wide")
+st.set_page_config(page_title="Hao Harbour 官方海报生成器", layout="wide")
 
 # --- 1. 字体加载 ---
 def load_font(size):
@@ -23,35 +23,31 @@ def call_ai_summary(desc):
     API_KEY = "sk-d99a91f22bf340139a335fb3d50d0ef5"
     API_URL = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    # 强制 AI 输出标准格式
-    prompt = f"你是一个房产专家。请根据描述写一个精简的海报文案。要求：1.标题吸睛。2.每一行信息必须以 '-' 开头。3.全部中文，多用Emoji。严禁使用 ** 或 # 符号。\n\n原文：{desc}"
+    prompt = f"你是一个房产专家。请根据描述写一个极其精简的海报文案。要求：1.标题吸睛。2.每一行信息必须以 '-' 开头。3.直接输出纯文本，严禁使用任何 ** 或 # 符号。\n\n原文：{desc}"
     payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.5}
     res = requests.post(API_URL, headers=headers, json=payload)
     return res.json()['choices'][0]['message']['content']
 
-# --- 3. 水印逻辑 (加深版) ---
-def add_watermark(base_image, text):
-    # 创建图层
-    txt_layer = Image.new('RGBA', base_image.size, (255, 255, 255, 0))
-    draw = ImageDraw.Draw(txt_layer)
-    font = load_font(100) # 水印字体加大
+# --- 3. 倾斜水印逻辑 ---
+def add_diagonal_watermark(image, text):
+    # 创建水印层
+    watermark = Image.new('RGBA', image.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(watermark)
+    font = load_font(120)
     
-    # 【修改重点】颜色改为深灰色 (100,100,100)，透明度调高到 80 (之前是40)
-    fill_color = (100, 100, 100, 80) 
+    # 设置水印颜色和透明度 (灰度 120, 透明度 100)
+    color = (120, 120, 120, 100)
     
-    width, height = base_image.size
-    # 在图片上平铺 6 个水印，确保无法被裁剪
-    positions = [
-        (width//6, height//4), (width//2, height//4),
-        (width//6, height//2), (width//2, height//2),
-        (width//6, height*3//4), (width//2, height*3//4)
-    ]
-    
-    for pos in positions:
-        # 稍微倾斜水印 (通过新建小图旋转实现太复杂，这里直接平铺)
-        draw.text(pos, text, font=font, fill=fill_color)
+    # 计算倾斜角度并在临时小图上绘制，然后旋转
+    # 为简化代码并保证性能，我们在多个位置绘制，达到覆盖效果
+    w, h = image.size
+    for x in range(0, w, 400):
+        for y in range(0, h, 400):
+            # 绘制背景水印
+            draw.text((x, y), text, font=font, fill=color)
 
-    return Image.alpha_composite(base_image.convert('RGBA'), txt_layer)
+    # 合并
+    return Image.alpha_composite(image.convert('RGBA'), watermark)
 
 # --- 4. 海报合成 ---
 def create_poster(images, text):
@@ -59,12 +55,12 @@ def create_poster(images, text):
     img_h = 450
     gap = 25
     rows = (len(images) + 1) // 2
-    poster_h = rows * (img_h + gap) + 1200
     
-    poster = Image.new('RGB', (canvas_w, poster_h), (255, 255, 255))
+    # 初始给一个足够大的画布，后面会裁剪
+    poster = Image.new('RGB', (canvas_w, 5000), (255, 255, 255))
     draw = ImageDraw.Draw(poster)
     
-    # 1行2张图片排列
+    # 放置图片 (1行2张)
     for i, img_file in enumerate(images):
         img = Image.open(img_file).convert("RGB")
         tw = (canvas_w - gap * 3) // 2
@@ -76,45 +72,46 @@ def create_poster(images, text):
         y = (i // 2) * (img_h + gap) + gap
         poster.paste(img, (x, y))
 
-    # --- 【修改重点】解决勾号乱码 ---
-    # 去除 Markdown
-    text = re.sub(r'[*#_~`>]', '', text)
-    # 弃用特殊字符勾号，改用标准的中文符号“√”或者直接画一个
-    text = text.replace("- ", "√ ") 
+    # --- 文案排版 ---
+    clean_text = re.sub(r'[*#_~`>]', '', text)
+    # 强制将所有连字符替换为最稳的“√”
+    clean_text = clean_text.replace("-", "√") 
     
     font = load_font(44)
     cur_y = rows * (img_h + gap) + 80
     
-    for line in text.split('\n'):
+    for line in clean_text.split('\n'):
         line = line.strip()
         if not line: continue
-        
+        # 自动换行
         wrapped = textwrap.wrap(line, width=24)
         for wl in wrapped:
             draw.text((80, cur_y), wl, fill=(30, 30, 30), font=font)
             cur_y += 75
         cur_y += 15
 
-    # 底部版权声明
-    draw.text((canvas_w - 450, cur_y + 50), "Hao Harbour Real Estate", fill=(100, 100, 100), font=load_font(35))
-
-    final_poster = poster.crop((0, 0, canvas_w, cur_y + 150))
-    # 添加加深版水印
-    watermarked = add_watermark(final_poster, "Hao Harbour")
+    # 版权小字
+    draw.text((80, cur_y + 40), "Hao Harbour Real Estate", fill=(150, 150, 150), font=load_font(30))
+    
+    # --- 智能裁剪：切掉多余底部 ---
+    final_h = cur_y + 150
+    poster = poster.crop((0, 0, canvas_w, final_h))
+    
+    # --- 添加水印 ---
+    poster_with_wm = add_diagonal_watermark(poster, "Hao Harbour")
     
     buf = io.BytesIO()
-    watermarked.convert('RGB').save(buf, format='PNG')
+    poster_with_wm.convert('RGB').save(buf, format='PNG')
     return buf.getvalue()
 
-# --- UI ---
-st.title("🏡 Hao Harbour 房产海报生成器")
-desc = st.text_area("粘贴描述")
-files = st.file_uploader("照片 (最多6张)", accept_multiple_files=True)
+# --- Streamlit UI ---
+st.title("🏡 Hao Harbour 房产海报终极版")
+desc = st.text_area("1. 粘贴 Description")
+files = st.file_uploader("2. 上传照片 (1-6张)", accept_multiple_files=True)
 
-if st.button("生成海报"):
+if st.button("🚀 生成带倾斜水印海报"):
     if desc and files:
-        with st.spinner("正在合成带水印的海报..."):
-            summary = call_ai_summary(desc)
-            poster_data = create_poster(files[:6], summary)
+        with st.spinner("正在生成并精确裁剪..."):
+            poster_data = create_poster(files[:6], call_ai_summary(desc))
             st.image(poster_data)
-            st.download_button("下载海报", poster_data, "hao_harbour.png")
+            st.download_button("📥 下载海报", poster_data, "hao_harbour.png")
