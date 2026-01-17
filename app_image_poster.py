@@ -6,7 +6,7 @@ import textwrap
 import os
 import re
 
-st.set_page_config(page_title="Hao Harbour 房产海报生成器", layout="wide")
+st.set_page_config(page_title="Hao Harbour 房产海报", layout="wide")
 
 # --- 1. 字体加载 ---
 def load_font(size):
@@ -100,7 +100,7 @@ def create_poster(images, text):
     return buf.getvalue()
 
 # --- UI ---
-st.title("🏡 Hao Harbour 专属海报生成 (带水印防伪)")
+st.title("🏡 Hao Harbour 专属海报")
 desc_in = st.text_area("1. 粘贴 Description")
 files_in = st.file_uploader("2. 上传照片 (1-6张)", accept_multiple_files=True)
 
