@@ -6,7 +6,7 @@ import textwrap
 import os
 import re
 
-st.set_page_config(page_title="Hao Harbour 旗舰定型版", layout="wide")
+st.set_page_config(page_title="Hao Harbour 官方海报", layout="wide")
 
 def load_font(size):
     font_path = "simhei.ttf"
@@ -116,7 +116,7 @@ def create_poster(images, text):
     return buf.getvalue()
 
 # --- UI ---
-st.title("🏡 Hao Harbour 旗舰定型版 (防截断/8图版)")
+st.title("🏡 Hao Harbour 官方海报")
 desc = st.text_area("粘贴 Description")
 files = st.file_uploader("上传图片 (前8张将被使用)", accept_multiple_files=True)
 
