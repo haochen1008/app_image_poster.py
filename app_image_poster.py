@@ -1,154 +1,103 @@
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 import requests
-from io import BytesIO
-import textwrap # 用于文字自动换行
-import base64 # 用于处理图片URL
+import io
+import textwrap
 
-# 页面配置
-st.set_page_config(page_title="AI图片海报生成器", layout="wide", page_icon="🖼️")
+# --- 页面配置 ---
+st.set_page_config(page_title="高级房源海报生成器", layout="wide")
 
-# DeepSeek API 配置 (用于AI总结，如果需要)
 API_KEY = "sk-d99a91f22bf340139a335fb3d50d0ef5"
 API_URL = "https://api.deepseek.com/chat/completions"
 
-def call_ai_summarize(desc_text):
-    if not desc_text:
-        return "请提供描述文字。"
-    
+# --- 字体处理 (解决乱码的关键) ---
+def get_font(size):
+    # 尝试下载中文字体，如果下载失败则使用默认
+    font_url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansCJKsc/NotoSansCJKsc-Regular.ttf"
+    try:
+        r = requests.get(font_url)
+        return ImageFont.truetype(io.BytesIO(r.content), size)
+    except:
+        return ImageFont.load_default()
+
+def call_ai_summary(desc):
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    prompt = f"""
-    你是一个专业的英国房产中介。请根据以下描述，为客户生成一份简洁的中文房源核心要点。
-    要求：总结3-5个最关键的卖点，包括位置、房型、租金、交通、亮点等。
-    请直接输出总结内容，不要带任何前缀或解释性文字。
-    
-    原始描述：
-    {desc_text}
-    """
-    
-    payload = {
-        "model": "deepseek-chat", # 使用deepseek-chat进行文本总结
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.5,
-        "max_tokens": 300
-    }
-    
-    try:
-        response = requests.post(API_URL, headers=headers, json=payload)
-        return response.json()['choices'][0]['message']['content'].strip()
-    except Exception as e:
-        st.error(f"AI总结失败，请检查DeepSeek余额或网络。错误：{e}")
-        return "AI总结失败，请手动编辑。"
+    prompt = f"你是一个房产专家。请根据以下描述，写一个极其精简的房源海报文案。要求：1. 标题吸睛。2. 列表式列出核心信息（位置、房型、租金、入住时间）。3. 全部中文，多用Emoji。不要有任何废话。\n\n原文：{desc}"
+    payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.5}
+    res = requests.post(API_URL, headers=headers, json=payload)
+    return res.json()['choices'][0]['message']['content']
 
-def get_font(size, is_bold=False):
-    # Streamlit Cloud 环境下的字体路径可能需要调整
-    # 尝试使用默认字体或更通用的字体
-    font_path = "arial.ttf" # Windows默认
-    try:
-        return ImageFont.truetype(font_path, size)
-    except IOError:
-        try: # 尝试Linux/Mac默认字体
-            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
-        except IOError:
-            return ImageFont.load_default() # Fallback到默认字体
-
-def create_property_poster(images, description_summary):
-    if not images:
-        st.error("没有上传图片，无法生成海报。")
-        return None
-
-    # 海报尺寸 (可调整)
-    poster_width = 1080 # 常见社交媒体图片宽度
-    single_image_height = 400 # 每张图高度
-    text_area_height = 300 # 文字区域高度
+def create_poster(images, text):
+    # 海报宽度固定
+    canvas_w = 1200
+    img_h = 450 # 每张图片的高度
     
-    # 动态计算海报总高度
-    total_image_height = len(images) * single_image_height
-    poster_height = total_image_height + text_area_height + 50 # 额外留白
-
-    poster = Image.new('RGB', (poster_width, poster_height), color = 'white')
+    # 计算图片行数 (一行两张)
+    num_imgs = len(images)
+    rows = (num_imgs + 1) // 2
+    total_img_h = rows * img_h
+    
+    # 创建画布
+    canvas_h = total_img_h + 800 # 留出文字空间
+    poster = Image.new('RGB', (canvas_w, canvas_h), (255, 255, 255))
     draw = ImageDraw.Draw(poster)
+    
+    # 1. 绘制图片 (1行2张)
+    for i, img_file in enumerate(images):
+        img = Image.open(img_file).convert("RGB")
+        # 裁剪并缩放图片以适应 1/2 宽度
+        target_w = canvas_w // 2 - 20
+        img = img.resize((target_w, img_h), Image.Resampling.LANCZOS)
+        
+        x = 10 if i % 2 == 0 else canvas_w // 2 + 10
+        y = (i // 2) * (img_h + 10) + 20
+        poster.paste(img, (x, y))
 
-    # 1. 放置图片
-    current_y = 0
-    for img_file in images:
-        try:
-            img = Image.open(img_file).convert("RGB")
-            img = img.resize((poster_width, single_image_height), Image.LANCZOS)
-            poster.paste(img, (0, current_y))
-            current_y += single_image_height
-        except Exception as e:
-            st.warning(f"无法加载图片: {img_file.name if hasattr(img_file, 'name') else '未知文件'}. 错误: {e}")
-            continue
+    # 2. 绘制文案
+    font_main = get_font(45)
+    text_y = total_img_h + 60
+    
+    # 简单的自动换行处理
+    margin = 60
+    for line in text.split('\n'):
+        wrapped_lines = textwrap.wrap(line, width=25) # 中文宽度限制
+        for w_line in wrapped_lines:
+            draw.text((margin, text_y), w_line, fill=(30, 30, 30), font=font_main)
+            text_y += 70
+        text_y += 20
 
-    # 2. 放置文字
-    text_margin = 40
-    text_x = text_margin
-    text_y = current_y + text_margin
+    # 转为字节流供下载
+    img_byte_arr = io.BytesIO()
+    poster.save(img_byte_arr, format='PNG')
+    return img_byte_arr.getvalue()
 
-    # 标题字体
-    title_font = get_font(38, is_bold=True)
-    draw.text((text_x, text_y), "✨ 精选房源推荐 ✨", fill=(50, 50, 50), font=title_font)
-    text_y += 60
-
-    # 内容字体
-    content_font = get_font(28)
-    # 自动换行
-    lines = textwrap.wrap(description_summary, width=45) # 每行45个字符左右
-    for line in lines:
-        draw.text((text_x, text_y), line, fill=(70, 70, 70), font=content_font)
-        text_y += 40 # 行间距
-
-    # 3. 生成可下载的图片数据
-    buf = BytesIO()
-    poster.save(buf, format="PNG") # PNG格式支持透明背景，JPG适合照片
-    byte_im = buf.getvalue()
-    return byte_im
-
-# --- Streamlit UI ---
-st.title("🖼️ 房源图片海报生成器 (BETA)")
+# --- UI 界面 ---
+st.title("🏡 高级房源海报合成器")
 st.markdown("---")
-st.info("💡 操作指南：上传2-3张房源图片，粘贴描述，AI将自动总结并生成一张可下载的图片海报！")
 
-# 1. 上传图片
-st.subheader("1️⃣ 上传房源图片 (建议2-3张，最多5张)")
-uploaded_files = st.file_uploader("支持 JPG/PNG 格式", accept_multiple_files=True, type=['jpg', 'png', 'jpeg'])
+col_in, col_out = st.columns([1, 1])
 
-# 2. 粘贴描述
-st.subheader("2️⃣ 粘贴房源描述")
-desc_text = st.text_area("从 Rightmove 复制 Description 到这里...", height=180)
+with col_in:
+    st.subheader("1. 素材上传")
+    desc = st.text_area("粘贴 Rightmove 描述", height=150)
+    files = st.file_uploader("上传房源照片 (最多6张，1行2张排列)", accept_multiple_files=True, type=['jpg','png','jpeg'])
+    if files:
+        st.write(f"已选中 {len(files)} 张照片")
 
-# 3. 生成海报按钮
-if st.button("✨ 生成海报图片"):
-    if not uploaded_files:
-        st.error("请至少上传一张图片！")
-    elif not desc_text:
-        st.error("请粘贴房源描述！")
-    else:
-        with st.spinner("AI 正在总结描述并合成图片海报中..."):
-            # 限制最多处理5张图片，避免内存过载
-            selected_images = uploaded_files[:5]
-            
-            # AI 总结描述
-            summary = call_ai_summarize(desc_text)
-            
-            # 合成图片海报
-            image_bytes = create_property_poster(selected_images, summary)
-            
-            if image_bytes:
-                st.success("海报生成成功！")
-                st.image(image_bytes, caption="您的专属房源海报", use_column_width=True)
-                
-                # 提供下载按钮
-                st.download_button(
-                    label="⬇️ 下载海报图片",
-                    data=image_bytes,
-                    file_name="房源海报.png",
-                    mime="image/png"
-                )
-                st.balloons()
-            else:
-                st.error("海报生成失败，请检查上传图片或描述内容。")
-
-st.markdown("---")
-st.caption("注意：此功能处于测试阶段，图片处理可能消耗更多资源。")
+with col_out:
+    st.subheader("2. 生成海报")
+    if st.button("🎨 开始合成图片海报"):
+        if not desc or not files:
+            st.error("请确保填写了描述并上传了照片")
+        else:
+            with st.spinner("正在下载字体并合成海报..."):
+                try:
+                    # 1. AI 总结
+                    summary = call_ai_summary(desc)
+                    # 2. 合成图片
+                    poster_data = create_poster(files[:6], summary)
+                    # 3. 展示
+                    st.image(poster_data)
+                    st.download_button("📥 下载这张海报照片", poster_data, "property_poster.png", "image/png")
+                except Exception as e:
+                    st.error(f"失败了: {e}")
