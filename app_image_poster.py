@@ -6,7 +6,7 @@ import textwrap
 import os
 import re
 
-st.set_page_config(page_title="Hao Harbour 旗舰版-完美修复", layout="wide")
+st.set_page_config(page_title="Hao Harbour 旗舰丰富版", layout="wide")
 
 def load_font(size):
     font_path = "simhei.ttf"
@@ -20,53 +20,51 @@ def call_ai_summary(desc):
     API_URL = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     
-    # 极度严苛的 Prompt，防止 AI 话多
+    # 调整 Prompt：要求丰富、保留关键数据，强制使用 £
     prompt = (
-        "你是一个英国房产文案专家。请精简原文，只输出以下 5 行内容，每行以 '-' 开头：\n"
-        "1. 项目名称与位置\n"
-        "2. 房型配置\n"
-        "3. 租金（必须包含 £ 符号）\n"
-        "4. 入住日期（起租时间）\n"
-        "5. 核心亮点（一句话总结）\n"
-        "严禁输出'长租类型'、'最短租期'、'押金'。严禁重复输出租金。\n\n"
+        "你是一个高端房产文案专家。请根据描述写一份详尽的海报文案。要求：\n"
+        "1. 标题要大气吸睛。\n"
+        "2. 详细列出：地理位置（邮编、区位）、房型配置（卧室/卫浴/阳台）、租金详情（必须同时包含月租和周租，使用 £ 符号）、面积大小、入住日期。\n"
+        "3. 详细列出公寓亮点（如24小时礼宾、健身房、媒体室、交通枢纽、周边公园等）。\n"
+        "4. 每一项信息必须以 'v' 或 '-' 开头，排版整齐。\n"
+        "5. 严禁输出'最短租期'、'押金'。租金信息只输出一次，不要重复。\n\n"
         f"原文：{desc}"
     )
     
-    payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}
+    payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.4}
     res = requests.post(API_URL, headers=headers, json=payload)
     return res.json()['choices'][0]['message']['content']
 
 def draw_checkmark(draw, x, y, size=32, color=(40, 40, 40)):
+    # 绘制更美观的 V 字勾号
     points = [(x, y + size//2), (x + size//3, y + size), (x + size, y)]
     draw.line(points, fill=color, width=6)
 
-def add_safe_watermark(image, text):
+def add_smart_watermark(image, text):
     img = image.convert('RGBA')
     w, h = img.size
     txt_layer = Image.new('RGBA', (w, h), (255, 255, 255, 0))
     
-    # 水印字体 220，颜色深 (透明度140)
-    font = load_font(220)
-    fill = (40, 40, 40, 140) 
+    font = load_font(220) # 大号字体
+    fill = (40, 40, 40, 140) # 深色透明度
 
-    # 创建旋转文字块
+    # 创建文字块
     temp_draw = ImageDraw.Draw(txt_layer)
     bbox = temp_draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-    
     txt_img = Image.new('RGBA', (tw + 100, th + 100), (255, 255, 255, 0))
     ImageDraw.Draw(txt_img).text((50, 50), text, font=font, fill=fill)
     
-    # 旋转角度调小至 15 度，更安全
-    rotated = txt_img.rotate(15, expand=True, resample=Image.BICUBIC)
+    # 旋转 18 度，美观且安全
+    rotated = txt_img.rotate(18, expand=True, resample=Image.BICUBIC)
     rw, rh = rotated.size
 
-    # 放置两个绝对安全的位置
-    # 第一个在图片区中心
-    img_zone_h = h // 2
-    pos1 = (w//2 - rw//2, img_zone_h//2 - rh//2)
-    # 第二个在文字区中心
-    pos2 = (w//2 - rw//2, img_zone_h + (h - img_zone_h)//2 - rh//2)
+    # 第一个水印：图片拼贴区中心
+    # 假设图片占了一半左右的高度
+    pos1 = (w//2 - rw//2, h//4 - rh//2)
+    # 第二个水印：文字描述区中心
+    # 文字区是从图片结束到海报底部
+    pos2 = (w//2 - rw//2, (h * 3)//4 - rh//2)
 
     txt_layer.paste(rotated, pos1, rotated)
     txt_layer.paste(rotated, pos2, rotated)
@@ -78,10 +76,11 @@ def create_poster(images, text):
     gap = 25
     rows = (len(images) + 1) // 2
     
-    poster = Image.new('RGB', (canvas_w, 5000), (255, 255, 255))
+    # 预设一个足够长的画布
+    poster = Image.new('RGB', (canvas_w, 6000), (255, 255, 255))
     draw = ImageDraw.Draw(poster)
     
-    # 图片排列
+    # 1. 拼图区域
     for i, img_file in enumerate(images):
         img = Image.open(img_file).convert("RGB")
         tw = (canvas_w - gap * 3) // 2
@@ -93,20 +92,22 @@ def create_poster(images, text):
         y = (i // 2) * (img_h + gap) + gap
         poster.paste(img, (x, y))
 
-    # 文案清洗，保留 £
-    clean_text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s,，.。\-\/£]', '', text)
+    # 2. 文案排版区域
+    # 正则表达式增强：明确放行 £ 符号
+    clean_text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s,，.。\-\/£v√:：]', '', text)
     font = load_font(48)
-    cur_y = rows * (img_h + gap) + 100
+    cur_y = rows * (img_h + gap) + 80
     
-    for line in clean_text.split('\n'):
+    lines = clean_text.split('\n')
+    for line in lines:
         line = line.strip()
         if not line: continue
         
-        is_list = line.startswith('-')
-        content = line.lstrip('- ').strip()
+        # 判断是否为列表项（支持 AI 输出的 - 或 v 或 √）
+        is_list = any(line.startswith(s) for s in ['-', 'v', '√'])
+        content = line.lstrip('-v√ ').strip()
         
-        # 针对长句子自动换行
-        wrapped = textwrap.wrap(content, width=20 if is_list else 22)
+        wrapped = textwrap.wrap(content, width=22 if is_list else 24)
         for idx, wl in enumerate(wrapped):
             if is_list and idx == 0:
                 draw_checkmark(draw, 80, cur_y + 12)
@@ -115,25 +116,25 @@ def create_poster(images, text):
                 indent = 140 if is_list else 80
                 draw.text((indent, cur_y), wl, fill=(30, 30, 30), font=font)
             cur_y += 90
-        cur_y += 20
+        cur_y += 15
 
-    # 最后的精准裁剪：留一点底边美感
-    final_poster = poster.crop((0, 0, canvas_w, cur_y + 100))
-    # 加上深色居中水印
-    watermarked = add_safe_watermark(final_poster, "Hao Harbour")
+    # 3. 精准裁剪与水印
+    final_poster = poster.crop((0, 0, canvas_w, cur_y + 120))
+    watermarked = add_smart_watermark(final_poster, "Hao Harbour")
     
     buf = io.BytesIO()
     watermarked.convert('RGB').save(buf, format='PNG')
     return buf.getvalue()
 
 # --- UI ---
-st.title("🏡 Hao Harbour 海报最终修复版")
+st.title("🏡 Hao Harbour 旗舰丰富版")
+st.markdown("这一版强化了**文案丰富度**、**£符号保留**以及**水印位置适配**。")
 desc = st.text_area("粘贴 Description")
 files = st.file_uploader("上传图片", accept_multiple_files=True)
 
-if st.button("🚀 点击生成完美海报"):
+if st.button("🚀 生成海报"):
     if desc and files:
-        with st.spinner("正在修复文案与水印排版..."):
+        with st.spinner("正在生成内容丰富的海报..."):
             poster_data = create_poster(files[:6], call_ai_summary(desc))
             st.image(poster_data)
-            st.download_button("📥 下载海报", poster_data, "hao_harbour.png")
+            st.download_button("📥 下载海报", poster_data, "hao_harbour_full.png")
