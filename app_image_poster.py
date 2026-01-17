@@ -6,7 +6,7 @@ import textwrap
 import os
 import re
 
-st.set_page_config(page_title="Hao Harbour 官方海报", layout="wide")
+st.set_page_config(page_title="Hao Harbour 旗舰版-日期保障", layout="wide")
 
 def load_font(size):
     font_path = "simhei.ttf"
@@ -117,4 +117,4 @@ def create_poster(images, text):
     return buf.getvalue()
 
 # --- UI ---
-st.title("🏡 Hao Harbour 官方海报")
+st.title("🏡 Hao Harbour 海报旗舰版 (起租日期保障)")
