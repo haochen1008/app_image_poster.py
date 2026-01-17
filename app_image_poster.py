@@ -6,7 +6,7 @@ import textwrap
 import os
 import re
 
-st.set_page_config(page_title="Hao Harbour 黄金标准模板 V2", layout="wide")
+st.set_page_config(page_title="Hao Harbour 8图旗舰版", layout="wide")
 
 def load_font(size):
     font_path = "simhei.ttf"
@@ -20,16 +20,15 @@ def call_ai_summary(desc):
     API_URL = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     
-    # 强化 Prompt：深度挖掘交通、教育及设施配套，严格控制换行
+    # 强制中文提取，且条目不少于10条
     prompt = (
-        "你是一位深耕伦敦Zone 1的高级房产经纪人。请根据描述完成以下内容的深度提取，模仿‘图10’的专业风格：\n"
-        "1. 标题：仅显示英文原名，如 'Lexington Gardens'。确保简洁大气。\n"
-        "2. 地理位置：详细描述 Nine Elms 核心区位，提到 SW11 邮编及泰晤士河南岸的优越性。\n"
-        "3. 交通与通勤：基于 Nine Elms 或 Vauxhall 站，补充通勤至 KCL、LSE、UCL、IC 等名校的便利性，以及 Northern Line/Victoria Line 的连接性。\n"
-        "4. 房型租金：月租与周租用逗号隔开，数字后加'磅'。列出精确面积和入住日期。\n"
-        "5. 公寓配套：深挖24h礼宾、专属健身房、屋顶花园、私家媒体室等设施。\n"
-        "6. 周边生活：提到 Battersea Power Station 购物中心、美国大使馆及泰晤士河径。\n"
-        "要求：每行以 '√' 开头。严禁备注说明。英文单词必须完整。\n\n"
+        "你是一个伦敦高端房产文案专家。请将房源信息提取为中文，要求内容丰富、专业，条目不少于12条：\n"
+        "1. 标题：英文原名，如 'Lexington Gardens'。\n"
+        "2. 详细列出：月租和周租（格式：月租XXXX磅，周租XXX磅）、房型、面积、入住日期。\n"
+        "3. 交通与大学：详细列出步行至Nine Elms/Vauxhall站时间，及至KCL、LSE、UCL、IC等名校的地铁通勤时间。\n"
+        "4. 大楼配套：详细列出24h礼宾、专属健身房、媒体室、商务中心、屋顶花园等设施。\n"
+        "5. 生活环境：提到Battersea Power Station购物中心、泰晤士河径、周边超市（Waitrose/Sainsbury's）。\n"
+        "要求：除标题外全部用中文，每行以 '√' 开头。严禁备注说明。确保所有英文单词完整不换行。\n\n"
         f"原文：{desc}"
     )
     
@@ -54,8 +53,9 @@ def add_smart_watermark(image, text):
     ImageDraw.Draw(txt_img).text((50, 50), text, font=font, fill=fill)
     rotated = txt_img.rotate(18, expand=True, resample=Image.BICUBIC)
     rw, rh = rotated.size
-    pos1 = (w//2 - rw//2, h//4 - rh//2)
-    pos2 = (w//2 - rw//2, (h * 3)//4 - rh//2)
+    # 动态计算水印位置，均匀分布在海报中上部和中下部
+    pos1 = (w//2 - rw//2, h//3 - rh//2)
+    pos2 = (w//2 - rw//2, (h * 2)//3 - rh//2)
     txt_layer.paste(rotated, pos1, rotated)
     txt_layer.paste(rotated, pos2, rotated)
     return Image.alpha_composite(img, txt_layer)
@@ -64,13 +64,17 @@ def create_poster(images, text):
     canvas_w = 1200
     img_h = 450
     gap = 25
-    rows = (len(images) + 1) // 2
-    poster = Image.new('RGB', (canvas_w, 10000), (255, 255, 255))
+    # 最多显示8张图，2x4布局
+    num_imgs = min(len(images), 8)
+    rows = (num_imgs + 1) // 2
+    
+    # 预留足够的超长画布
+    poster = Image.new('RGB', (canvas_w, 12000), (255, 255, 255))
     draw = ImageDraw.Draw(poster)
     
-    # 1. 拼图
-    for i, img_file in enumerate(images):
-        img = Image.open(img_file).convert("RGB")
+    # 1. 拼图区域 (2x4)
+    for i in range(num_imgs):
+        img = Image.open(images[i]).convert("RGB")
         tw = (canvas_w - gap * 3) // 2
         scale = max(tw/img.width, img_h/img.height)
         img = img.resize((int(img.width*scale), int(img.height*scale)), Image.Resampling.LANCZOS)
@@ -80,22 +84,26 @@ def create_poster(images, text):
         y = (i // 2) * (img_h + gap) + gap
         poster.paste(img, (x, y))
 
-    # 2. 文本逻辑
+    # 2. 文案排版
     font = load_font(48)
     cur_y = rows * (img_h + gap) + 100
-    margin = 80
     
-    # 增加可用宽度：调整换行参数以利用 London 后面的空白空间
-    max_line_chars = 32 # 之前是 22，现在显著增加
+    # 增加宽度限制到 30，确保英文单词不被切断且利用横向空间
+    max_width = 32
     
+    # 过滤掉不需要的负面信息
+    bad_keywords = ["最短租期", "押金", "说明", "备注"]
     lines = [l.strip() for l in text.split('\n') if l.strip()]
 
     for line in lines:
-        is_list = line.startswith('√') or line.startswith('-')
-        content = re.sub(r'^[√\-]\s*', '', line)
+        if any(k in line for k in bad_keywords): continue
         
-        # 使用更大的 width 值，并确保不截断单词
-        wrapped = textwrap.wrap(content, width=max_line_chars, break_long_words=False)
+        is_list = any(line.startswith(s) for s in ['√', '-', 'v', '*'])
+        # 清理内容头部的符号
+        content = re.sub(r'^[√\-v*]\s*', '', line)
+        
+        # 换行处理
+        wrapped = textwrap.wrap(content, width=max_width, break_long_words=False)
         
         for idx, wl in enumerate(wrapped):
             current_x = 160 if is_list else 80
@@ -103,10 +111,11 @@ def create_poster(images, text):
                 draw_checkmark(draw, 80, cur_y + 12)
             
             draw.text((current_x, cur_y), wl, fill=(30, 30, 30), font=font)
-            cur_y += 90 # 行高
-        cur_y += 15 # 段间距
+            cur_y += 95 # 增加行距，显得更大气
+        cur_y += 20 # 段落间距
 
-    final_poster = poster.crop((0, 0, canvas_w, cur_y + 120))
+    # 3. 智能裁剪
+    final_poster = poster.crop((0, 0, canvas_w, cur_y + 150))
     watermarked = add_smart_watermark(final_poster, "Hao Harbour")
     
     buf = io.BytesIO()
@@ -114,13 +123,15 @@ def create_poster(images, text):
     return buf.getvalue()
 
 # --- UI ---
-st.title("🏡 Hao Harbour 黄金标准 V2 (深度内容提取)")
-desc = st.text_area("粘贴 Description (确保包含项目名称、邮编等关键信息)")
-files = st.file_uploader("上传房源照片", accept_multiple_files=True)
+st.title("🏡 Hao Harbour 8图旗舰标准版")
+st.markdown("这一版支持 **8张照片** 拼贴，且强化了**10+项中文亮点**提取。")
+desc = st.text_area("粘贴 Description")
+files = st.file_uploader("上传图片 (至少8张效果最佳)", accept_multiple_files=True)
 
-if st.button("🚀 生成图10级别海报"):
+if st.button("🚀 生成旗舰海报"):
     if desc and files:
-        with st.spinner("正在进行深度内容提取与排版优化..."):
-            poster_data = create_poster(files[:6], call_ai_summary(desc))
+        with st.spinner("正在提取海量房源亮点并排版..."):
+            # 传入最多8张图
+            poster_data = create_poster(files[:8], call_ai_summary(desc))
             st.image(poster_data)
-            st.download_button("📥 下载海报", poster_data, "hao_harbour_pro.png")
+            st.download_button("📥 下载海报", poster_data, "hao_harbour_flagship.png")
