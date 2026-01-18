@@ -6,7 +6,7 @@ import textwrap
 import os
 import re
 
-st.set_page_config(page_title="Hao Harbour 海报", layout="wide")
+st.set_page_config(page_title="Hao Harbour 旗舰定型版", layout="wide")
 
 def load_font(size):
     font_path = "simhei.ttf"
@@ -20,16 +20,15 @@ def call_ai_summary(desc):
     API_URL = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     
-    # 核心指令：12条以上Tick，中文，禁止具体分钟数
     prompt = (
         "你是一个伦敦高端房产文案专家。请将房源信息提取为中文，条目不少于12条：\n"
         "1. 标题：英文原名，如 'Lexington Gardens'。\n"
         "2. 租金：月租与周租（格式：月租XXXX磅，周租XXX磅）。\n"
-        "3. 房型面积：间数、双卫配置、具体面积（平方英尺/平方米）及入住日期。\n"
-        "4. 交通通勤：邻近地铁站名，并说明可便捷通勤至 LSE, KCL, UCL, IC, 等名校（严禁写具体分钟数）。\n"
+        "3. 房型面积：间数、双卫配置、具体面积及入住日期。\n"
+        "4. 交通通勤：邻近地铁站名，并说明可便捷通勤至 LSE, KCL, UCL, IC, King's College 等名校（严禁写具体分钟数）。\n"
         "5. 大楼设施：详细列出24h礼宾、健身房、影音室、私人阳台、屋顶花园等。\n"
         "6. 生活环境：周边高端超市、购物中心及景观步道。\n"
-        "要求：除标题外全部用中文，每行以 '√' 开头。严禁备注说明。英文单词必须完整且不换行。\n\n"
+        "要求：除标题外全部用中文，每行以 '√' 开头。严禁备注说明。确保所有英文单词完整且不换行。\n\n"
         f"原文：{desc}"
     )
     
@@ -46,7 +45,8 @@ def add_smart_watermark(image, text):
     w, h = img.size
     txt_layer = Image.new('RGBA', (w, h), (255, 255, 255, 0))
     font = load_font(220)
-    fill = (40, 40, 40, 100) 
+    # 水印加深：Alpha 调至 190
+    fill = (40, 40, 40, 190) 
     temp_draw = ImageDraw.Draw(txt_layer)
     bbox = temp_draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
@@ -67,11 +67,10 @@ def create_poster(images, text):
     num_imgs = min(len(images), 8)
     rows = (num_imgs + 1) // 2
     
-    # 建立超长画布
     poster = Image.new('RGB', (canvas_w, 12000), (255, 255, 255))
     draw = ImageDraw.Draw(poster)
     
-    # 1. 拼图区域 (8张)
+    # 1. 拼图区域 (2x4 布局)
     for i in range(num_imgs):
         img = Image.open(images[i]).convert("RGB")
         tw = (canvas_w - gap * 3) // 2
@@ -83,40 +82,36 @@ def create_poster(images, text):
         y = (i // 2) * (img_h + gap) + gap
         poster.paste(img, (x, y))
 
-    # 2. 文本逻辑 (防止截断核心逻辑)
+    # 2. 文本排版核心修正
     font = load_font(48)
-    cur_y = rows * (img_h + gap) + 100
+    cur_y = rows * (img_h + gap) + 120
     
-    # --- 安全排版设置 ---
-    left_margin = 80      # 勾号位置
-    text_x_start = 160    # 文字起始位置 (预留勾号空间)
-    safe_max_width = 22   # 强制每行最多22个中文字符，确保右侧留白
+    # 【极重要】物理防截断参数
+    # 降低 width 阈值到 20 左右，确保在 1200px 宽度内即使单词再长也有余地
+    safe_char_width = 20 
+    left_margin = 100
+    text_x_start = 180
     
     lines = [l.strip() for l in text.split('\n') if l.strip()]
 
     for line in lines:
-        # 排除掉不需要的垃圾信息
-        if any(k in line for k in ["最短租期", "押金", "说明", "备注"]): continue
+        if any(k in line for k in ["最短租期", "押金", "备注"]): continue
         
         is_list = any(line.startswith(s) for s in ['√', '-', 'v', '*'])
         content = re.sub(r'^[√\-v*]\s*', '', line)
         
-        # 自动换行：确保单词完整且不超出安全宽度
-        wrapped = textwrap.wrap(content, width=safe_max_width, break_long_words=False)
+        # 强制换行计算：禁止切断长单词
+        wrapped = textwrap.wrap(content, width=safe_char_width, break_long_words=False)
         
         for idx, wl in enumerate(wrapped):
-            # 渲染文字起始位置
             render_x = text_x_start if is_list else left_margin
-            
-            # 只有第一行画勾号
             if is_list and idx == 0:
                 draw_checkmark(draw, left_margin, cur_y + 12)
             
             draw.text((render_x, cur_y), wl, fill=(30, 30, 30), font=font)
-            cur_y += 90 # 行高
-        cur_y += 20 # 段间距
+            cur_y += 90 
+        cur_y += 25 
 
-    # 3. 动态裁剪与水印
     final_poster = poster.crop((0, 0, canvas_w, cur_y + 150))
     watermarked = add_smart_watermark(final_poster, "Hao Harbour")
     
@@ -124,14 +119,15 @@ def create_poster(images, text):
     watermarked.convert('RGB').save(buf, format='PNG')
     return buf.getvalue()
 
-# --- UI ---
-st.title("🏡 Hao Harbour 海报")
-desc = st.text_area("粘贴房源 Description")
+# --- Streamlit UI ---
+st.title("🏡 Hao Harbour 旗舰旗舰修正版")
+st.markdown("✅ **水印颜色加深** | ✅ **右侧绝对防截断** | ✅ **中文8图深度提取**")
+desc = st.text_area("粘贴 Description")
 files = st.file_uploader("上传图片 (前8张生效)", accept_multiple_files=True)
 
-if st.button("🚀 生成海报"):
+if st.button("🚀 生成高清海报"):
     if desc and files:
-        with st.spinner("正在提取12+亮点并优化排版..."):
+        with st.spinner("正在生成..."):
             poster_data = create_poster(files[:8], call_ai_summary(desc))
             st.image(poster_data)
-            st.download_button("📥 下载海报", poster_data, "hao_harbour_flagship.png")
+            st.download_button("📥 下载海报", poster_data, "hao_harbour_final.png")
